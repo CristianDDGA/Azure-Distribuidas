@@ -5,6 +5,9 @@ from flask import Flask, jsonify, request
 import time
 import threading
 import pytds
+import secrets
+import requests
+from html import escape
 
 # =============================
 # Conexion con la base de datos
@@ -92,6 +95,177 @@ def get_products():
             "message": "Error al obtener productos",
             "error": str(e)
         }), 500
+
+# ==========================================
+# POST - Enviar catalogo mediante Brevo
+# ==========================================
+
+@app.route('/api/products/send-email', methods=['POST'])
+def send_products_email():
+
+    # Validar el token enviado por WordPress.
+    token_configurado = os.environ.get('CATALOGO_API_TOKEN', '')
+
+    if not token_configurado:
+        return jsonify({
+            "message": "Falta configurar CATALOGO_API_TOKEN en Render"
+        }), 503
+
+    autorizacion = request.headers.get('Authorization', '')
+    token_recibido = autorizacion.removeprefix('Bearer ')
+
+    if (
+        not autorizacion.startswith('Bearer ')
+        or not secrets.compare_digest(
+            token_recibido.encode('utf-8'),
+            token_configurado.encode('utf-8')
+        )
+    ):
+        return jsonify({
+            "message": "Token de acceso invalido"
+        }), 401
+
+    # Obtener configuracion desde Render.
+    api_key = os.environ.get('BREVO_API_KEY')
+    remitente = os.environ.get('BREVO_SENDER_EMAIL')
+    nombre_remitente = os.environ.get(
+        'BREVO_SENDER_NAME',
+        'App-Distribuidas'
+    )
+    destinatario = os.environ.get('CATALOGO_DESTINO_EMAIL')
+
+    if not all([api_key, remitente, destinatario]):
+        return jsonify({
+            "message": "Faltan variables de configuracion de Brevo en Render"
+        }), 503
+
+    # Reutilizar tu funcion existente.
+    # Esta llamada es interna: no realiza otra peticion HTTP a Render.
+    respuesta_productos, codigo = get_products()
+
+    if codigo != 200:
+        return jsonify({
+            "message": "No se pudieron consultar los productos para el correo"
+        }), 500
+
+    productos = respuesta_productos.get_json().get('result', [])
+
+    if not productos:
+        return jsonify({
+            "message": "No existen productos para enviar"
+        }), 400
+
+    try:
+        filas = ''
+
+        for producto in productos:
+            nombre = escape(str(producto['NOMBRE']))
+            precio = f"{float(producto['PRECIO']):,.2f}"
+            cantidad = int(producto['STOCK'])
+
+            filas += f"""
+                <tr>
+                    <td style="padding:12px;border:1px solid #ddd;">
+                        {nombre}
+                    </td>
+                    <td style="padding:12px;border:1px solid #ddd;">
+                        ${precio}
+                    </td>
+                    <td style="padding:12px;border:1px solid #ddd;">
+                        {cantidad}
+                    </td>
+                </tr>
+            """
+
+        contenido = f"""
+        <!DOCTYPE html>
+        <html lang="es">
+        <head>
+            <meta charset="UTF-8">
+        </head>
+        <body style="font-family:Arial,sans-serif;color:#222;">
+            <h1 style="color:#2563eb;">Catalogo de Productos</h1>
+
+            <h2>Bienvenido, Cristian Ango</h2>
+
+            <p>Estos son nuestros productos y sus cantidades disponibles.</p>
+
+            <table style="width:100%;border-collapse:collapse;text-align:left;">
+                <thead>
+                    <tr style="background:#2563eb;color:white;">
+                        <th style="padding:12px;">Producto</th>
+                        <th style="padding:12px;">Precio</th>
+                        <th style="padding:12px;">Cantidad</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {filas}
+                </tbody>
+            </table>
+
+            <p>App-Distribuidas</p>
+        </body>
+        </html>
+        """
+
+        envio = requests.post(
+            'https://api.brevo.com/v3/smtp/email',
+            headers={
+                'accept': 'application/json',
+                'content-type': 'application/json',
+                'api-key': api_key
+            },
+            json={
+                'sender': {
+                    'name': nombre_remitente,
+                    'email': remitente
+                },
+                'to': [
+                    {
+                        'email': destinatario,
+                        'name': 'Cristian Ango'
+                    }
+                ],
+                'subject': 'Catalogo de productos - App-Distribuidas',
+                'htmlContent': contenido
+            },
+            timeout=(5, 20)
+        )
+
+        if envio.status_code != 201:
+            app.logger.warning(
+                "Brevo rechazo el envio. HTTP %s",
+                envio.status_code
+            )
+            return jsonify({
+                "message": "Brevo no acepto el envio",
+                "brevo_http": envio.status_code
+            }), 502
+
+        return jsonify({
+            "message": "Brevo acepto el envio del catalogo"
+        }), 200
+
+    except requests.exceptions.Timeout:
+        return jsonify({
+            "message": (
+                "Se agoto el tiempo de espera de Brevo. "
+                "Revisa el correo o los registros antes de volver a enviar."
+            )
+        }), 504
+
+    except requests.exceptions.RequestException:
+        return jsonify({
+            "message": "No se pudo confirmar el envio con Brevo"
+        }), 502
+
+    except Exception:
+        app.logger.exception("Error al preparar el catalogo")
+        return jsonify({
+            "message": "Error al preparar el catalogo para enviar"
+        }), 500
+
+
 
 
 # =============================
