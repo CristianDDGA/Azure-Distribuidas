@@ -135,15 +135,14 @@ def send_products_email():
 
     if not all([api_key, remitente, destinatario]):
         return jsonify({
-            "message": "Faltan variables de configuracion de Brevo en Render"
+            "message": "Faltan variables de configuracion de Brevo"
         }), 503
 
-    # Consultar los productos usando tu funcion existente.
     respuesta_productos, codigo = get_products()
 
     if codigo != 200:
         return jsonify({
-            "message": "No se pudieron consultar los productos para el correo"
+            "message": "No se pudieron consultar los productos"
         }), 500
 
     productos = respuesta_productos.get_json().get('result', [])
@@ -154,37 +153,32 @@ def send_products_email():
         }), 400
 
     try:
-        lista_productos = ''
+        # Contar los registros, no sumar las unidades del stock.
+        total = len(productos)
+
+        resumen = (
+            "1 producto disponible"
+            if total == 1
+            else f"{total} productos disponibles"
+        )
+
+        contenido = (
+            "Bienvenido, Cristian Ango.\n\n"
+            f"{resumen}\n\n"
+        )
 
         for producto in productos:
-            nombre = escape(str(producto['NOMBRE']))
+            nombre = str(producto['NOMBRE'])
             precio = f"{float(producto['PRECIO']):.2f}"
             cantidad = int(producto['STOCK'])
 
-            lista_productos += f"""
-                <p>
-                    {nombre}<br>
-                    Precio: ${precio}<br>
-                    Cantidad: {cantidad}
-                </p>
-            """
+            contenido += (
+                f"{nombre}\n"
+                f"Precio: ${precio}\n"
+                f"Cantidad: {cantidad}\n\n"
+            )
 
-        contenido = f"""
-        <!DOCTYPE html>
-        <html lang="es">
-        <head>
-            <meta charset="UTF-8">
-        </head>
-        <body>
-            <p>Bienvenido, Cristian Ango.</p>
-            <p>Estos son los productos disponibles:</p>
-
-            {lista_productos}
-
-            <p>App-Distribuidas</p>
-        </body>
-        </html>
-        """
+        contenido += "App-Distribuidas"
 
         envio = requests.post(
             'https://api.brevo.com/v3/smtp/email',
@@ -204,8 +198,8 @@ def send_products_email():
                         'name': 'Cristian Ango'
                     }
                 ],
-                'subject': 'Catálogo de productos - App-Distribuidas',
-                'htmlContent': contenido
+                'subject': 'Catálogo de productos',
+                'textContent': contenido
             },
             timeout=(5, 20)
         )
@@ -222,14 +216,15 @@ def send_products_email():
             }), 502
 
         return jsonify({
-            "message": "Brevo acepto el envio del catalogo"
+            "message": "Brevo acepto el envio del catalogo",
+            "total_productos": total
         }), 200
 
     except requests.exceptions.Timeout:
         return jsonify({
             "message": (
                 "Se agoto el tiempo de espera de Brevo. "
-                "Revisa el correo o los registros antes de volver a enviar."
+                "Revisa el correo antes de volver a enviar."
             )
         }), 504
 
@@ -242,9 +237,8 @@ def send_products_email():
         app.logger.exception("Error al preparar el catalogo")
 
         return jsonify({
-            "message": "Error al preparar el catalogo para enviar"
+            "message": "Error al preparar el catalogo"
         }), 500
-
 # =============================
 # GET - Obtener producto por ID
 # =============================
