@@ -169,12 +169,12 @@ def send_products_email():
 
         for producto in productos:
             nombre = str(producto['NOMBRE'])
-            precio = f"{float(producto['PRECIO']):.2f}"
+           ## precio = f"{float(producto['PRECIO']):.2f}"
             cantidad = int(producto['STOCK'])
 
             contenido += (
                 f"{nombre}\n"
-                f"Precio: ${precio}\n"
+               ## f"Precio: ${precio}\n"
                 f"Cantidad: {cantidad}\n\n"
             )
 
